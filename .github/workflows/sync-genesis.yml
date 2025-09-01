@@ -1,0 +1,57 @@
+name: Sync Genesis to All Stacks
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'genesis-bmc/**'
+
+jobs:
+  sync-stacks:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout BelieversCommons
+        uses: actions/checkout@v4
+        with:
+          repository: believerscommons/BelieversCommons
+          token: ${{ secrets.GH_TOKEN }}
+
+      - name: Install GitHub CLI + yq
+        run: |
+          sudo apt-get install -y gh jq
+          pip install yq || true
+
+      - name: Authenticate GitHub CLI
+        run: echo "${{ secrets.GH_TOKEN }}" | gh auth login --with-token
+
+      - name: Parse registry file
+        id: parse
+        run: |
+          echo "STACKS=$(yq -o=json .stacks registry.yml)" >> $GITHUB_ENV
+
+      - name: Sync each stack
+        run: |
+          echo "Syncing Genesis BMC to stacks..."
+          for row in $(echo "${STACKS}" | jq -c '.[]'); do
+            STACK_REPO=$(echo $row | jq -r '.stack_repo')
+
+            echo "→ Updating $STACK_REPO"
+
+            # Clone Genesis
+            git clone https://github.com/believerscommons/genesis-bmc tmp-genesis
+            cd tmp-genesis
+
+            # Add stack remote
+            git remote add stack https://x-access-token:${{ secrets.GH_TOKEN }}@github.com/$STACK_REPO.git
+
+            # Force push Genesis contents into stack (without wiping linked submodules)
+            git fetch stack main || true
+            git checkout -B genesis-sync
+            git push stack genesis-sync --force
+
+            cd ..
+            rm -rf tmp-genesis
+          done
